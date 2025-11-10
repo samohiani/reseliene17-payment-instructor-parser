@@ -1,0 +1,18 @@
+module.exports = {
+  TRANSACTION_SUCCESS: 'Transaction executed successfully',
+  TRANSACTION_PENDING: 'Transaction scheduled for future execution',
+  MALFORMED_INSTRUCTION: 'Malformed instruction: unable to parse keywords',
+  MISSING_KEYWORD: 'Missing required keyword',
+  INVALID_AMOUNT: 'Amount must be a positive integer (no decimals or negatives)',
+  UNSUPPORTED_CURRENCY: 'Unsupported currency. Only NGN, USD, GBP, and GHS are supported',
+  INVALID_ORDER: 'Invalid keyword order',
+  DEBIT_ACCOUNT_INVALID: 'Invalid debit account ID format',
+  CREDIT_ACCOUNT_INVALID: 'Invalid credit account ID format',
+  SAME_ACCOUNTS: 'Debit and credit accounts cannot be the same',
+  DEBIT_ACCOUNT_NOT_FOUND: 'Debit account not found in provided accounts list',
+  CREDIT_ACCOUNT_NOT_FOUND: 'Credit account not found in provided accounts list',
+  CURRENCY_MISMATCH: 'Account currencies must match and match transaction currency',
+  INSUFFICIENT_FUNDS: 'Insufficient funds in debit account',
+  INVALID_DATE: 'Invalid date format. Must be YYYY-MM-DD',
+  INVALID_PAYLOAD: 'Invalid request payload',
+};

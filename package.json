@@ -9,7 +9,8 @@
     "url": "profold-be-api-1"
   },
   "scripts": {
-    "test": "set USE_MOCK_MODEL=1 && mocha --recursive --require dotenv/config",
+    "start": "node app.js",
+    "test": "set USE_MOCK_MODEL=1 && mocha tests/**/*.test.js --recursive --require dotenv/config",
     "prepare": "husky",
     "commitlint": "commitlint --edit",
     "sync-envs": "node sync-env-files"
@@ -46,7 +47,7 @@
     "bcrypt": "^5.1.1",
     "bull": "^4.16.5",
     "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
+    "dotenv": "^16.6.1",
     "express": "^4.18.2",
     "form-data": "^4.0.2",
     "handlebars": "^4.7.8",

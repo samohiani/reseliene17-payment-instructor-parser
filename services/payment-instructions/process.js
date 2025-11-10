@@ -99,11 +99,10 @@ function getCurrentUTCDate() {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 }
 
-// Split string by whitespace (simplified version)
 function splitByWhitespace(str) {
   if (!str) return [];
 
-  // Use string manipulation instead of regex for splitting
+  // Use string manipulation
   const trimmed = str.trim();
   const result = [];
   let currentWord = '';

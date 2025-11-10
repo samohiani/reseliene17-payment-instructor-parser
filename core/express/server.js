@@ -278,7 +278,7 @@ function Server(serverConfig = {}) {
       // Global 404 Catcher
       res.status(404).json({
         status: 'error',
-        message: 'Resource not found.',
+        message: 'Resource not found. Available endpoint: POST /payment-instructions',
       });
     });
     app.use((err, _, res, __) => {

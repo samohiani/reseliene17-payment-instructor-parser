@@ -1,6 +1,5 @@
 const { PaymentInstructionsMessages } = require('@app/messages');
 const validator = require('@app-core/validator');
-
 const {
   isValidAccountId,
   isValidAmount,
@@ -49,10 +48,10 @@ const STATUS_CODES = {
   MALFORMED_INSTRUCTION: 'SY03',
 };
 
-// Currencies we can process (case-insensitive)
+// Supported currency codes (case-insensitive during parsing)
 const SUPPORTED_CURRENCIES = ['NGN', 'USD', 'GBP', 'GHS'];
 
-// Define what a valid request should look like
+// Validator spec for the service
 const serviceSpec = `root {
   accounts[] {
     id string
@@ -64,7 +63,7 @@ const serviceSpec = `root {
 
 const parsedServiceSpec = validator.parse(serviceSpec);
 
-// Parse dates in YYYY-MM-DD format, handling leap years
+// Parse dates in YYYY-MM-DD format
 function parseDate(dateStr) {
   if (!dateStr || dateStr.length !== 10) return null;
   if (dateStr[4] !== '-' || dateStr[7] !== '-') return null;
@@ -95,13 +94,11 @@ function parseDate(dateStr) {
     : null;
 }
 
-// Get today's date in UTC
 function getCurrentUTCDate() {
   const now = new Date();
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 }
 
-// Split text into words, handling various whitespace characters
 function splitByWhitespace(str) {
   if (!str) return [];
 
@@ -135,7 +132,6 @@ function parseDebitInstruction(words) {
   const debitAccount = words[5] || null;
   const creditAccount = words[10] || null;
 
-  // Store what we've parsed so far
   const parsedData = {
     type: 'DEBIT',
     amount: amountStr ? parseInt(amountStr, 10) : null,
@@ -145,48 +141,41 @@ function parseDebitInstruction(words) {
     executeBy: null,
   };
 
-  // Need at least 6 words to parse anything meaningful
   if (!hasEnoughWords(words, 6)) {
     return createMissingKeywordError(parsedData, STATUS_CODES);
   }
+
   if (!amountStr) {
     return createInvalidAmountError(parsedData, amountStr, STATUS_CODES);
   }
 
   const amount = parseInt(amountStr, 10);
 
-  // Amount must be a positive whole number
   if (!isValidAmount(amountStr)) {
     parsedData.amount = null;
     return createInvalidAmountError(parsedData, amountStr, STATUS_CODES);
   }
 
-  // Check "FROM ACCOUNT" keywords if we have enough words
   if (hasEnoughWords(words, 5) && !hasValidFromAccountKeywords(words)) {
     return createInvalidKeywordOrderError(parsedData, STATUS_CODES);
   }
 
-  // Validate debit account ID format
   if (debitAccount && !isValidAccountId(debitAccount)) {
     return createInvalidAccountIdError(parsedData, true, STATUS_CODES);
   }
 
-  // Check "FOR CREDIT TO ACCOUNT" keywords if we have enough words
   if (hasEnoughWords(words, 10) && !hasValidForCreditToAccountKeywords(words)) {
     return createInvalidKeywordOrderError(parsedData, STATUS_CODES);
   }
 
-  // Validate credit account ID format
   if (creditAccount && !isValidAccountId(creditAccount)) {
     return createInvalidAccountIdError(parsedData, false, STATUS_CODES);
   }
 
-  // Can't transfer money to the same account
   if (debitAccount && creditAccount && areSameAccounts(debitAccount, creditAccount)) {
     return createSameAccountsError(parsedData, STATUS_CODES);
   }
 
-  // Need at least 11 words for a complete instruction
   if (!hasEnoughWords(words, 11)) {
     return createMissingKeywordError(parsedData, STATUS_CODES);
   }
@@ -194,7 +183,6 @@ function parseDebitInstruction(words) {
   let executeBy = null;
   let currentIndex = 11;
 
-  // Check for optional future date
   if (hasValidOnDate(words, currentIndex)) {
     currentIndex++;
     if (currentIndex >= words.length) {
@@ -255,48 +243,41 @@ function parseCreditInstruction(words) {
     executeBy: null,
   };
 
-  // Need at least 6 words to parse anything meaningful
   if (!hasEnoughWords(words, 6)) {
     return createMissingKeywordError(parsedData, STATUS_CODES);
   }
+
   if (!amountStr) {
     return createInvalidAmountError(parsedData, amountStr, STATUS_CODES);
   }
 
   const amount = parseInt(amountStr, 10);
 
-  // Amount must be a positive whole number
   if (!isValidAmount(amountStr)) {
     parsedData.amount = null;
     return createInvalidAmountError(parsedData, amountStr, STATUS_CODES);
   }
 
-  // Check "TO ACCOUNT" keywords if we have enough words
   if (hasEnoughWords(words, 5) && !hasValidToAccountKeywords(words)) {
     return createInvalidKeywordOrderError(parsedData, STATUS_CODES);
   }
 
-  // Validate credit account ID format
   if (creditAccount && !isValidAccountId(creditAccount)) {
     return createInvalidAccountIdError(parsedData, false, STATUS_CODES);
   }
 
-  // Check "FOR DEBIT FROM ACCOUNT" keywords if we have enough words
   if (hasEnoughWords(words, 10) && !hasValidForDebitFromAccountKeywords(words)) {
     return createInvalidKeywordOrderError(parsedData, STATUS_CODES);
   }
 
-  // Validate debit account ID format
   if (debitAccount && !isValidAccountId(debitAccount)) {
     return createInvalidAccountIdError(parsedData, true, STATUS_CODES);
   }
 
-  // Can't transfer money to the same account
   if (debitAccount && creditAccount && areSameAccounts(debitAccount, creditAccount)) {
     return createSameAccountsError(parsedData, STATUS_CODES);
   }
 
-  // Need at least 11 words for a complete instruction
   if (!hasEnoughWords(words, 11)) {
     return createMissingKeywordError(parsedData, STATUS_CODES);
   }
@@ -304,7 +285,6 @@ function parseCreditInstruction(words) {
   let executeBy = null;
   let currentIndex = 11;
 
-  // Check for optional future date
   if (hasValidOnDate(words, currentIndex)) {
     currentIndex++;
     if (currentIndex >= words.length) {
@@ -333,7 +313,6 @@ function parseCreditInstruction(words) {
     currentIndex++;
   }
 
-  // Make sure no extra words at the end
   if (hasExtraWords(words, currentIndex)) {
     return createInvalidKeywordOrderError(
       {
@@ -344,16 +323,14 @@ function parseCreditInstruction(words) {
     );
   }
 
-  // Everything looks good
   return createSuccessResponse({
     ...parsedData,
     executeBy,
   });
 }
 
-// Execute the actual money transfer between accounts
+// Process transaction between accounts
 function processTransaction(parsedData, accounts) {
-  // Prepare list of accounts involved in this transaction
   let responseAccounts = [];
 
   accounts.forEach((account) => {
@@ -367,11 +344,9 @@ function processTransaction(parsedData, accounts) {
     }
   });
 
-  // Find the actual account objects
   const debitAccountObj = accounts.find((acc) => acc.id === parsedData.debitAccount);
   const creditAccountObj = accounts.find((acc) => acc.id === parsedData.creditAccount);
 
-  // Make sure debit account exists
   if (!debitAccountExists(debitAccountObj)) {
     return createAccountNotFoundError(
       {
@@ -388,7 +363,6 @@ function processTransaction(parsedData, accounts) {
     );
   }
 
-  // Make sure credit account exists
   if (!creditAccountExists(creditAccountObj)) {
     return createAccountNotFoundError(
       {
@@ -405,7 +379,6 @@ function processTransaction(parsedData, accounts) {
     );
   }
 
-  // Make sure we support this currency
   if (!isSupportedCurrency(parsedData.currency, SUPPORTED_CURRENCIES)) {
     return createUnsupportedCurrencyError(
       {
@@ -421,7 +394,6 @@ function processTransaction(parsedData, accounts) {
     );
   }
 
-  // Make sure all accounts use the same currency
   if (!currenciesMatch(debitAccountObj, creditAccountObj, parsedData.currency)) {
     return createCurrencyMismatchError(
       {
@@ -437,7 +409,6 @@ function processTransaction(parsedData, accounts) {
     );
   }
 
-  // Make sure debit account has enough money
   if (!hasSufficientFunds(debitAccountObj, parsedData.amount)) {
     return createInsufficientFundsError(
       {
@@ -454,7 +425,6 @@ function processTransaction(parsedData, accounts) {
     );
   }
 
-  // Determine if transaction executes now or later
   let status = 'successful';
   let statusCode = STATUS_CODES.SUCCESSFUL;
   let statusReason = PaymentInstructionsMessages.TRANSACTION_SUCCESS;
@@ -463,7 +433,6 @@ function processTransaction(parsedData, accounts) {
     const executeDate = parseDate(parsedData.executeBy);
     const currentDate = getCurrentUTCDate();
 
-    // Future-dated transactions are pending
     if (isFutureDate(executeDate, currentDate)) {
       status = 'pending';
       statusCode = STATUS_CODES.PENDING;
@@ -471,11 +440,9 @@ function processTransaction(parsedData, accounts) {
     }
   }
 
-  // Execute transaction if not pending
   if (status === 'successful') {
     responseAccounts = responseAccounts.map((account) => {
       if (account.id === parsedData.debitAccount) {
-        // Remove money from debit account
         return {
           ...account,
           balance_before: account.balance,
@@ -493,7 +460,6 @@ function processTransaction(parsedData, accounts) {
     });
   }
 
-  // Return final transaction result
   return {
     type: parsedData.type,
     amount: parsedData.amount,
@@ -508,22 +474,17 @@ function processTransaction(parsedData, accounts) {
   };
 }
 
-// Main function that figures out if this is a DEBIT or CREDIT instruction
+// Parse payment instruction (DEBIT or CREDIT format)
 function parseInstruction(instruction) {
-  // Must be a string
   if (!instruction || typeof instruction !== 'string') {
     return createMalformedInstructionError(STATUS_CODES);
   }
 
-  // Split into words
   const words = splitByWhitespace(instruction);
-
-  // Need at least 6 words for any valid instruction
   if (!hasEnoughWords(words, 6)) {
     return createMalformedInstructionError(STATUS_CODES);
   }
 
-  // Check first word to determine instruction type
   const firstWord = words[0].toUpperCase();
   if (hasValidFirstWord(firstWord)) {
     if (firstWord === 'DEBIT') {
@@ -533,25 +494,19 @@ function parseInstruction(instruction) {
       return parseCreditInstruction(words);
     }
   }
-
-  // Not a valid instruction type
   return createMalformedInstructionError(STATUS_CODES);
 }
 
-// Main service function that ties everything together
+// Main service function
 async function processTransactionService(serviceData, options = {}) {
   const opts = options;
 
-  // Validate input data matches our expected format
   const data = validator.validate(serviceData, parsedServiceSpec);
 
-  // Extract the instruction and accounts
   const { instruction, accounts } = data;
 
-  // Parse the instruction to make sure it's valid
   const parseResult = parseInstruction(instruction);
 
-  // If parsing failed, return the error
   if (!parseResult.success) {
     const parsedData = parseResult.data || {
       type: null,
@@ -567,7 +522,6 @@ async function processTransactionService(serviceData, options = {}) {
       status_code: STATUS_CODES.MALFORMED_INSTRUCTION,
     };
 
-    // Prepare accounts info for error response
     const responseAccounts = [];
     if (parsedData.debitAccount || parsedData.creditAccount) {
       accounts.forEach((account) => {
@@ -596,7 +550,6 @@ async function processTransactionService(serviceData, options = {}) {
     };
   }
 
-  // Process the transaction
   return processTransaction(parseResult.data, accounts);
 }
 

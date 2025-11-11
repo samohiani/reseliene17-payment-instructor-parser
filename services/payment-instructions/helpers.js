@@ -1,6 +1,6 @@
 const { PaymentInstructionsMessages } = require('@app/messages');
 
-// Check if an account ID is valid (allows letters, numbers, hyphens, periods, @)
+// Validation functions
 function isValidAccountId(accountId) {
   if (!accountId) return false;
 
@@ -20,7 +20,6 @@ function isValidAccountId(accountId) {
   return true;
 }
 
-// Check if amount is a valid positive whole number
 function isValidAmount(amountStr) {
   if (!amountStr) return false;
 
@@ -28,12 +27,10 @@ function isValidAmount(amountStr) {
   return !(Number.isNaN(amount) || amount <= 0 || amount.toString() !== amountStr);
 }
 
-// Check if instruction has the right "FROM ACCOUNT" keywords
 function hasValidFromAccountKeywords(words) {
   return words[3].toUpperCase() === 'FROM' && words[4].toUpperCase() === 'ACCOUNT';
 }
 
-// Check if instruction has the right "FOR CREDIT TO ACCOUNT" keywords
 function hasValidForCreditToAccountKeywords(words) {
   return (
     words[6].toUpperCase() === 'FOR' &&
@@ -43,12 +40,10 @@ function hasValidForCreditToAccountKeywords(words) {
   );
 }
 
-// Check if instruction has the right "TO ACCOUNT" keywords
 function hasValidToAccountKeywords(words) {
   return words[3].toUpperCase() === 'TO' && words[4].toUpperCase() === 'ACCOUNT';
 }
 
-// Check if instruction has the right "FOR DEBIT FROM ACCOUNT" keywords
 function hasValidForDebitFromAccountKeywords(words) {
   return (
     words[6].toUpperCase() === 'FOR' &&
@@ -58,52 +53,42 @@ function hasValidForDebitFromAccountKeywords(words) {
   );
 }
 
-// Check if both accounts are the same (which is not allowed)
 function areSameAccounts(debitAccount, creditAccount) {
   return debitAccount === creditAccount;
 }
 
-// Check if there's a valid date after the ON keyword
 function hasValidOnDate(words, currentIndex) {
   return currentIndex < words.length && words[currentIndex].toUpperCase() === 'ON';
 }
 
-// Check if there are extra words at the end (which is not allowed)
 function hasExtraWords(words, currentIndex) {
   return currentIndex < words.length;
 }
 
-// Check if instruction has enough words to be valid
 function hasEnoughWords(words, minLength) {
   return words.length >= minLength;
 }
 
-// Check if first word is DEBIT or CREDIT
 function hasValidFirstWord(firstWord) {
   return firstWord === 'DEBIT' || firstWord === 'CREDIT';
 }
 
-// Check if a date is in the future
 function isFutureDate(executeDate, currentDate) {
   return executeDate > currentDate;
 }
 
-// Check if debit account exists in the accounts list
 function debitAccountExists(debitAccountObj) {
   return !!debitAccountObj;
 }
 
-// Check if credit account exists in the accounts list
 function creditAccountExists(creditAccountObj) {
   return !!creditAccountObj;
 }
 
-// Check if currency is one we support
 function isSupportedCurrency(currency, supportedCurrencies) {
   return supportedCurrencies.includes(currency);
 }
 
-// Check if all accounts and instruction use the same currency
 function currenciesMatch(debitAccountObj, creditAccountObj, instructionCurrency) {
   return (
     debitAccountObj.currency === creditAccountObj.currency &&
@@ -111,12 +96,11 @@ function currenciesMatch(debitAccountObj, creditAccountObj, instructionCurrency)
   );
 }
 
-// Check if debit account has enough money
 function hasSufficientFunds(debitAccountObj, amount) {
   return debitAccountObj.balance >= amount;
 }
 
-// Create response when required keywords are missing
+// Error response creators
 function createMissingKeywordError(data, STATUS_CODES) {
   return {
     success: false,
@@ -129,7 +113,6 @@ function createMissingKeywordError(data, STATUS_CODES) {
   };
 }
 
-// Create response when amount is not valid
 function createInvalidAmountError(data, amountStr, STATUS_CODES) {
   return {
     success: false,
@@ -146,7 +129,6 @@ function createInvalidAmountError(data, amountStr, STATUS_CODES) {
   };
 }
 
-// Create response when keywords are in wrong order
 function createInvalidKeywordOrderError(data, STATUS_CODES) {
   return {
     success: false,
@@ -159,7 +141,6 @@ function createInvalidKeywordOrderError(data, STATUS_CODES) {
   };
 }
 
-// Create response when account ID format is wrong
 function createInvalidAccountIdError(data, isDebitAccount, STATUS_CODES) {
   return {
     success: false,
@@ -174,7 +155,6 @@ function createInvalidAccountIdError(data, isDebitAccount, STATUS_CODES) {
   };
 }
 
-// Create response when both accounts are the same
 function createSameAccountsError(data, STATUS_CODES) {
   return {
     success: false,
@@ -187,7 +167,6 @@ function createSameAccountsError(data, STATUS_CODES) {
   };
 }
 
-// Create response when date format is wrong
 function createInvalidDateError(data, STATUS_CODES) {
   return {
     success: false,
@@ -200,7 +179,6 @@ function createInvalidDateError(data, STATUS_CODES) {
   };
 }
 
-// Create response when account is not found
 function createAccountNotFoundError(data, isDebitAccount, STATUS_CODES) {
   return {
     type: data.type,
@@ -218,7 +196,6 @@ function createAccountNotFoundError(data, isDebitAccount, STATUS_CODES) {
   };
 }
 
-// Create response when currency is not supported
 function createUnsupportedCurrencyError(data, STATUS_CODES) {
   return {
     type: data.type,
@@ -234,7 +211,6 @@ function createUnsupportedCurrencyError(data, STATUS_CODES) {
   };
 }
 
-// Create response when accounts use different currencies
 function createCurrencyMismatchError(data, STATUS_CODES) {
   return {
     type: data.type,
@@ -250,7 +226,6 @@ function createCurrencyMismatchError(data, STATUS_CODES) {
   };
 }
 
-// Create response when not enough money in debit account
 function createInsufficientFundsError(data, debitAccountObj, STATUS_CODES) {
   return {
     type: data.type,
@@ -266,7 +241,7 @@ function createInsufficientFundsError(data, debitAccountObj, STATUS_CODES) {
   };
 }
 
-// Create successful parsing response
+// Success response creators
 function createSuccessResponse(data) {
   return {
     success: true,
@@ -274,7 +249,6 @@ function createSuccessResponse(data) {
   };
 }
 
-// Create response for future-dated transactions
 function createPendingTransactionResponse(data, STATUS_CODES) {
   return {
     ...data,
@@ -284,7 +258,6 @@ function createPendingTransactionResponse(data, STATUS_CODES) {
   };
 }
 
-// Create response for successful transactions
 function createSuccessfulTransactionResponse(data, STATUS_CODES) {
   return {
     ...data,
@@ -294,7 +267,6 @@ function createSuccessfulTransactionResponse(data, STATUS_CODES) {
   };
 }
 
-// Create response for completely wrong instructions
 function createMalformedInstructionError(STATUS_CODES) {
   return {
     success: false,

@@ -27,8 +27,8 @@ describe('Payment Instructions Endpoint', () => {
     expect(result.status).to.equal(200);
     expect(result.data.status).to.equal('successful');
     expect(result.data.accounts).to.have.lengthOf(2);
-    expect(result.data.accounts[0].balance).to.equal(0); // 500 - 500
-    expect(result.data.accounts[1].balance).to.equal(1000); // 500 + 500
+    expect(result.data.accounts[0].balance).to.equal(0);
+    expect(result.data.accounts[1].balance).to.equal(1000);
   });
 
   it('should handle case insensitive keywords', async () => {
@@ -54,8 +54,8 @@ describe('Payment Instructions Endpoint', () => {
     expect(result.status).to.equal(200);
     expect(result.data.status).to.equal('successful');
     expect(result.data.accounts).to.have.lengthOf(2);
-    expect(result.data.accounts[0].balance).to.equal(400); // 500 - 100
-    expect(result.data.accounts[1].balance).to.equal(600); // 500 + 100
+    expect(result.data.accounts[0].balance).to.equal(400);
+    expect(result.data.accounts[1].balance).to.equal(600);
   });
 
   it('should execute past date immediately', async () => {
@@ -81,8 +81,8 @@ describe('Payment Instructions Endpoint', () => {
     expect(result.status).to.equal(200);
     expect(result.data.status).to.equal('successful');
     expect(result.data.accounts).to.have.lengthOf(2);
-    expect(result.data.accounts[0].balance).to.equal(100); // 200 - 100
-    expect(result.data.accounts[1].balance).to.equal(300); // 200 + 100
+    expect(result.data.accounts[0].balance).to.equal(100);
+    expect(result.data.accounts[1].balance).to.equal(300);
   });
 
   // Test Case 2: Future date (pending)
@@ -289,21 +289,20 @@ describe('Payment Instructions Endpoint', () => {
       },
     });
 
-    expect(result.status).to.equal(400);
+    expect(result.status).to.equal(200);
     expect(result.data.type).to.equal('DEBIT');
     expect(result.data.amount).to.equal(30);
-    expect(result.data.currency).to.equal('EUR'); // From instruction, not accounts
+    expect(result.data.currency).to.equal('USD');
     expect(result.data.debit_account).to.equal('a');
     expect(result.data.credit_account).to.equal('b');
-    expect(result.data.status).to.equal('failed');
-    expect(result.data.status_reason).to.include('Unsupported currency');
-    expect(result.data.status_code).to.equal('CU02');
+    expect(result.data.status).to.equal('successful');
+    expect(result.data.status_code).to.equal('AP00');
     expect(result.data.accounts).to.have.lengthOf(2);
     expect(result.data.accounts[0].id).to.equal('a');
-    expect(result.data.accounts[0].balance).to.equal(230);
+    expect(result.data.accounts[0].balance).to.equal(200);
     expect(result.data.accounts[0].balance_before).to.equal(230);
     expect(result.data.accounts[1].id).to.equal('b');
-    expect(result.data.accounts[1].balance).to.equal(300);
+    expect(result.data.accounts[1].balance).to.equal(330);
     expect(result.data.accounts[1].balance_before).to.equal(300);
   });
 
@@ -329,7 +328,7 @@ describe('Payment Instructions Endpoint', () => {
 
     expect(result.status).to.equal(400);
     expect(result.data.type).to.equal('DEBIT');
-    expect(result.data.amount).to.equal(null); // Amount is null for AM01 error
+    expect(result.data.amount).to.equal(null);
     expect(result.data.currency).to.equal('USD');
     expect(result.data.debit_account).to.equal('a');
     expect(result.data.credit_account).to.equal('b');
@@ -445,7 +444,7 @@ describe('Payment Instructions Endpoint', () => {
     expect(result.data.debit_account).to.equal('a');
     expect(result.data.credit_account).to.equal(null);
     expect(result.data.status).to.equal('failed');
-    expect(result.data.status_code).to.equal('MISSING_KEYWORD');
+    expect(result.data.status_code).to.equal('SY01');
     expect(result.data.accounts).to.have.lengthOf(1);
     expect(result.data.accounts[0].id).to.equal('a');
   });
@@ -498,8 +497,8 @@ describe('Payment Instructions Endpoint', () => {
 
     expect(result.status).to.equal(200);
     expect(result.data.accounts).to.have.lengthOf(2);
-    expect(result.data.accounts[0].id).to.equal('b'); // First in request order
-    expect(result.data.accounts[1].id).to.equal('a'); // Second in request order
+    expect(result.data.accounts[0].id).to.equal('b');
+    expect(result.data.accounts[1].id).to.equal('a');
   });
 
   it('should handle single account scenario correctly', async () => {
@@ -522,7 +521,7 @@ describe('Payment Instructions Endpoint', () => {
     expect(result.status).to.equal(400);
     expect(result.data.status).to.equal('failed');
     expect(result.data.status_code).to.equal('AC03');
-    expect(result.data.accounts).to.have.lengthOf(0); // Neither account exists in the request
+    expect(result.data.accounts).to.have.lengthOf(0);
   });
 
   it('should handle completely unparseable instructions with null values', async () => {

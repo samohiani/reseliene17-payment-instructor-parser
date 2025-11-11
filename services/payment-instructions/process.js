@@ -1,9 +1,38 @@
-// Payment Instruction Processor
-// Parses and executes financial transaction instructions
 const { PaymentInstructionsMessages } = require('@app/messages');
 const validator = require('@app-core/validator');
 
-// Status codes for different validation and execution outcomes
+const {
+  isValidAccountId,
+  isValidAmount,
+  hasValidFromAccountKeywords,
+  hasValidForCreditToAccountKeywords,
+  hasValidToAccountKeywords,
+  hasValidForDebitFromAccountKeywords,
+  areSameAccounts,
+  hasValidOnDate,
+  hasExtraWords,
+  hasEnoughWords,
+  hasValidFirstWord,
+  isFutureDate,
+  debitAccountExists,
+  creditAccountExists,
+  isSupportedCurrency,
+  currenciesMatch,
+  hasSufficientFunds,
+  createMissingKeywordError,
+  createInvalidAmountError,
+  createInvalidKeywordOrderError,
+  createInvalidAccountIdError,
+  createSameAccountsError,
+  createInvalidDateError,
+  createAccountNotFoundError,
+  createUnsupportedCurrencyError,
+  createCurrencyMismatchError,
+  createInsufficientFundsError,
+  createMalformedInstructionError,
+  createSuccessResponse,
+} = require('./helpers');
+
 const STATUS_CODES = {
   SUCCESSFUL: 'AP00',
   PENDING: 'AP02',
@@ -20,10 +49,10 @@ const STATUS_CODES = {
   MALFORMED_INSTRUCTION: 'SY03',
 };
 
-// Supported currency codes (case-insensitive during parsing)
+// Currencies we can process (case-insensitive)
 const SUPPORTED_CURRENCIES = ['NGN', 'USD', 'GBP', 'GHS'];
 
-// Validator spec for the service
+// Define what a valid request should look like
 const serviceSpec = `root {
   accounts[] {
     id string
@@ -35,28 +64,7 @@ const serviceSpec = `root {
 
 const parsedServiceSpec = validator.parse(serviceSpec);
 
-// Validate account ID format (letters, numbers, hyphens, periods, @ symbols only)
-function isValidAccountId(accountId) {
-  if (!accountId) return false;
-
-  // Use string manipulation instead
-  for (let i = 0; i < accountId.length; i++) {
-    const char = accountId[i];
-    if (
-      !(char >= 'a' && char <= 'z') &&
-      !(char >= 'A' && char <= 'Z') &&
-      !(char >= '0' && char <= '9') &&
-      char !== '-' &&
-      char !== '.' &&
-      char !== '@'
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
-
-// Parse date in YYYY-MM-DD format with enhanced validation including leap years
+// Parse dates in YYYY-MM-DD format, handling leap years
 function parseDate(dateStr) {
   if (!dateStr || dateStr.length !== 10) return null;
   if (dateStr[4] !== '-' || dateStr[7] !== '-') return null;
@@ -68,41 +76,35 @@ function parseDate(dateStr) {
   const month = parseInt(parts[1], 10);
   const day = parseInt(parts[2], 10);
 
-  // Basic validation
   if (Number.isNaN(year) || Number.isNaN(month) || Number.isNaN(day)) return null;
   if (month < 1 || month > 12 || day < 1) return null;
 
-  // Days in each month (non-leap year)
   const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
-  // Check for leap year
   const isLeapYear = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
 
-  // Adjust February for leap years
   if (isLeapYear) {
     daysInMonth[1] = 29;
   }
 
-  // Validate day doesn't exceed days in the month
   if (day > daysInMonth[month - 1]) return null;
 
-  // Create date and verify it matches the input (handles edge cases like invalid dates)
   const date = new Date(year, month - 1, day);
   return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day
     ? date
     : null;
 }
 
-// Get current UTC date (without time component)
+// Get today's date in UTC
 function getCurrentUTCDate() {
   const now = new Date();
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 }
 
+// Split text into words, handling various whitespace characters
 function splitByWhitespace(str) {
   if (!str) return [];
 
-  // Use string manipulation
   const trimmed = str.trim();
   const result = [];
   let currentWord = '';
@@ -119,7 +121,6 @@ function splitByWhitespace(str) {
     }
   }
 
-  // Add the last word if it exists
   if (currentWord.length > 0) {
     result.push(currentWord);
   }
@@ -127,514 +128,236 @@ function splitByWhitespace(str) {
   return result;
 }
 
-// Parse DEBIT instruction format:
-// DEBIT [amount] [currency] FROM ACCOUNT [account_id] FOR CREDIT TO ACCOUNT [account_id] [ON [date]]
+// Format: DEBIT [amount] [currency] FROM ACCOUNT [account_id] FOR CREDIT TO ACCOUNT [account_id] [ON [date]]
 function parseDebitInstruction(words) {
-  if (words.length < 11) {
-    return {
-      success: false,
-      error: {
-        status: 'failed',
-        status_reason: PaymentInstructionsMessages.MISSING_KEYWORD,
-        status_code: STATUS_CODES.MISSING_KEYWORD,
-      },
-    };
-  }
-
-  const amountStr = words[1];
-
-  // Validate amount string is not empty
-  if (!amountStr) {
-    return {
-      success: false,
-      data: {
-        type: 'DEBIT',
-        amount: null,
-        currency: words[2] ? words[2].toUpperCase() : null,
-        debitAccount: words[5] || null,
-        creditAccount: words[10] || null,
-        executeBy: null,
-      },
-      error: {
-        status: 'failed',
-        status_reason: PaymentInstructionsMessages.INVALID_AMOUNT,
-        status_code: STATUS_CODES.INVALID_AMOUNT,
-      },
-    };
-  }
-
-  const amount = parseInt(amountStr, 10);
+  const amountStr = words[1] || null;
   const currency = words[2] ? words[2].toUpperCase() : null;
   const debitAccount = words[5] || null;
   const creditAccount = words[10] || null;
 
-  // Check that it's a positive integer with no decimal part
-  if (Number.isNaN(amount) || amount <= 0 || amount.toString() !== amountStr) {
-    return {
-      success: false,
-      data: {
-        type: 'DEBIT',
-        amount: null,
-        currency,
-        debitAccount,
-        creditAccount,
-        executeBy: null,
-      },
-      error: {
-        status: 'failed',
-        status_reason: PaymentInstructionsMessages.INVALID_AMOUNT,
-        status_code: STATUS_CODES.INVALID_AMOUNT,
-      },
-    };
+  // Store what we've parsed so far
+  const parsedData = {
+    type: 'DEBIT',
+    amount: amountStr ? parseInt(amountStr, 10) : null,
+    currency,
+    debitAccount,
+    creditAccount,
+    executeBy: null,
+  };
+
+  // Need at least 6 words to parse anything meaningful
+  if (!hasEnoughWords(words, 6)) {
+    return createMissingKeywordError(parsedData, STATUS_CODES);
+  }
+  if (!amountStr) {
+    return createInvalidAmountError(parsedData, amountStr, STATUS_CODES);
   }
 
-  // Note: We don't validate supported currencies here since that requires account information, it happens during transaction processing
+  const amount = parseInt(amountStr, 10);
 
-  // Validate "FROM ACCOUNT" keywords
-  if (words[3].toUpperCase() !== 'FROM' || words[4].toUpperCase() !== 'ACCOUNT') {
-    return {
-      success: false,
-      data: {
-        type: 'DEBIT',
-        amount,
-        currency,
-        debitAccount,
-        creditAccount,
-        executeBy: null,
-      },
-      error: {
-        status: 'failed',
-        status_reason: PaymentInstructionsMessages.INVALID_ORDER,
-        status_code: STATUS_CODES.INVALID_KEYWORD_ORDER,
-      },
-    };
+  // Amount must be a positive whole number
+  if (!isValidAmount(amountStr)) {
+    parsedData.amount = null;
+    return createInvalidAmountError(parsedData, amountStr, STATUS_CODES);
   }
 
-  if (!isValidAccountId(debitAccount)) {
-    return {
-      success: false,
-      data: {
-        type: 'DEBIT',
-        amount,
-        currency,
-        debitAccount,
-        creditAccount,
-        executeBy: null,
-      },
-      error: {
-        status: 'failed',
-        status_reason: PaymentInstructionsMessages.DEBIT_ACCOUNT_INVALID,
-        status_code: STATUS_CODES.INVALID_ACCOUNT_ID,
-      },
-    };
+  // Check "FROM ACCOUNT" keywords if we have enough words
+  if (hasEnoughWords(words, 5) && !hasValidFromAccountKeywords(words)) {
+    return createInvalidKeywordOrderError(parsedData, STATUS_CODES);
   }
 
-  // Validate "FOR CREDIT TO ACCOUNT" keywords
-  if (
-    words[6].toUpperCase() !== 'FOR' ||
-    words[7].toUpperCase() !== 'CREDIT' ||
-    words[8].toUpperCase() !== 'TO' ||
-    words[9].toUpperCase() !== 'ACCOUNT'
-  ) {
-    return {
-      success: false,
-      data: {
-        type: 'DEBIT',
-        amount,
-        currency,
-        debitAccount,
-        creditAccount,
-        executeBy: null,
-      },
-      error: {
-        status: 'failed',
-        status_reason: PaymentInstructionsMessages.INVALID_ORDER,
-        status_code: STATUS_CODES.INVALID_KEYWORD_ORDER,
-      },
-    };
+  // Validate debit account ID format
+  if (debitAccount && !isValidAccountId(debitAccount)) {
+    return createInvalidAccountIdError(parsedData, true, STATUS_CODES);
   }
 
-  if (!isValidAccountId(creditAccount)) {
-    return {
-      success: false,
-      data: {
-        type: 'DEBIT',
-        amount,
-        currency,
-        debitAccount,
-        creditAccount,
-        executeBy: null,
-      },
-      error: {
-        status: 'failed',
-        status_reason: PaymentInstructionsMessages.CREDIT_ACCOUNT_INVALID,
-        status_code: STATUS_CODES.INVALID_ACCOUNT_ID,
-      },
-    };
+  // Check "FOR CREDIT TO ACCOUNT" keywords if we have enough words
+  if (hasEnoughWords(words, 10) && !hasValidForCreditToAccountKeywords(words)) {
+    return createInvalidKeywordOrderError(parsedData, STATUS_CODES);
   }
 
-  // Prevent transactions to the same account
-  if (debitAccount === creditAccount) {
-    return {
-      success: false,
-      data: {
-        type: 'DEBIT',
-        amount,
-        currency,
-        debitAccount,
-        creditAccount,
-        executeBy: null,
-      },
-      error: {
-        status: 'failed',
-        status_reason: PaymentInstructionsMessages.SAME_ACCOUNTS,
-        status_code: STATUS_CODES.SAME_ACCOUNTS,
-      },
-    };
+  // Validate credit account ID format
+  if (creditAccount && !isValidAccountId(creditAccount)) {
+    return createInvalidAccountIdError(parsedData, false, STATUS_CODES);
+  }
+
+  // Can't transfer money to the same account
+  if (debitAccount && creditAccount && areSameAccounts(debitAccount, creditAccount)) {
+    return createSameAccountsError(parsedData, STATUS_CODES);
+  }
+
+  // Need at least 11 words for a complete instruction
+  if (!hasEnoughWords(words, 11)) {
+    return createMissingKeywordError(parsedData, STATUS_CODES);
   }
 
   let executeBy = null;
   let currentIndex = 11;
 
-  // Check for optional ON date
-  if (currentIndex < words.length && words[currentIndex].toUpperCase() === 'ON') {
+  // Check for optional future date
+  if (hasValidOnDate(words, currentIndex)) {
     currentIndex++;
     if (currentIndex >= words.length) {
-      return {
-        success: false,
-        data: {
-          type: 'DEBIT',
-          amount,
-          currency,
-          debitAccount,
-          creditAccount,
+      return createInvalidDateError(
+        {
+          ...parsedData,
           executeBy: null,
         },
-        error: {
-          status: 'failed',
-          status_reason: PaymentInstructionsMessages.INVALID_DATE,
-          status_code: STATUS_CODES.INVALID_DATE_FORMAT,
-        },
-      };
+        STATUS_CODES
+      );
     }
 
     const dateStr = words[currentIndex];
     const date = parseDate(dateStr);
     if (!date) {
-      return {
-        success: false,
-        data: {
-          type: 'DEBIT',
-          amount,
-          currency,
-          debitAccount,
-          creditAccount,
+      return createInvalidDateError(
+        {
+          ...parsedData,
           executeBy: dateStr,
         },
-        error: {
-          status: 'failed',
-          status_reason: PaymentInstructionsMessages.INVALID_DATE,
-          status_code: STATUS_CODES.INVALID_DATE_FORMAT,
-        },
-      };
+        STATUS_CODES
+      );
     }
 
     executeBy = dateStr;
     currentIndex++;
   }
 
-  // Ensure no extra words after the instruction
-  if (currentIndex < words.length) {
-    return {
-      success: false,
-      data: {
-        type: 'DEBIT',
-        amount,
-        currency,
-        debitAccount,
-        creditAccount,
+  if (hasExtraWords(words, currentIndex)) {
+    return createInvalidKeywordOrderError(
+      {
+        ...parsedData,
         executeBy,
       },
-      error: {
-        status: 'failed',
-        status_reason: PaymentInstructionsMessages.INVALID_ORDER,
-        status_code: STATUS_CODES.INVALID_KEYWORD_ORDER,
-      },
-    };
+      STATUS_CODES
+    );
   }
 
-  return {
-    success: true,
-    data: {
-      type: 'DEBIT',
-      amount,
-      currency,
-      debitAccount,
-      creditAccount,
-      executeBy,
-    },
-  };
+  return createSuccessResponse({
+    ...parsedData,
+    executeBy,
+  });
 }
 
-// Parse CREDIT instruction format:
-// CREDIT [amount] [currency] TO ACCOUNT [account_id] FOR DEBIT FROM ACCOUNT [account_id] [ON [date]]
+// Format: CREDIT [amount] [currency] TO ACCOUNT [account_id] FOR DEBIT FROM ACCOUNT [account_id] [ON [date]]
 function parseCreditInstruction(words) {
-  if (words.length < 11) {
-    return {
-      success: false,
-      error: {
-        status: 'failed',
-        status_reason: PaymentInstructionsMessages.MISSING_KEYWORD,
-        status_code: STATUS_CODES.MISSING_KEYWORD,
-      },
-    };
-  }
-
-  // Validate amount is a positive integer (no decimals)
-  const amountStr = words[1];
-
-  // Validate amount string is not empty
-  if (!amountStr) {
-    return {
-      success: false,
-      data: {
-        type: 'CREDIT',
-        amount: null,
-        currency: words[2] ? words[2].toUpperCase() : null,
-        debitAccount: words[10] || null,
-        creditAccount: words[5] || null,
-        executeBy: null,
-      },
-      error: {
-        status: 'failed',
-        status_reason: PaymentInstructionsMessages.INVALID_AMOUNT,
-        status_code: STATUS_CODES.INVALID_AMOUNT,
-      },
-    };
-  }
-
-  const amount = parseInt(amountStr, 10);
+  const amountStr = words[1] || null;
   const currency = words[2] ? words[2].toUpperCase() : null;
   const creditAccount = words[5] || null;
   const debitAccount = words[10] || null;
 
-  // Check that it's a positive integer with no decimal part
-  if (Number.isNaN(amount) || amount <= 0 || amount.toString() !== amountStr) {
-    return {
-      success: false,
-      data: {
-        type: 'CREDIT',
-        amount: null,
-        currency,
-        debitAccount,
-        creditAccount,
-        executeBy: null,
-      },
-      error: {
-        status: 'failed',
-        status_reason: PaymentInstructionsMessages.INVALID_AMOUNT,
-        status_code: STATUS_CODES.INVALID_AMOUNT,
-      },
-    };
+  const parsedData = {
+    type: 'CREDIT',
+    amount: amountStr ? parseInt(amountStr, 10) : null,
+    currency,
+    debitAccount,
+    creditAccount,
+    executeBy: null,
+  };
+
+  // Need at least 6 words to parse anything meaningful
+  if (!hasEnoughWords(words, 6)) {
+    return createMissingKeywordError(parsedData, STATUS_CODES);
+  }
+  if (!amountStr) {
+    return createInvalidAmountError(parsedData, amountStr, STATUS_CODES);
   }
 
-  // Note: We don't validate supported currencies here since that requires account information, it happens during transaction processing
+  const amount = parseInt(amountStr, 10);
 
-  // Validate "TO ACCOUNT" keywords
-  if (words[3].toUpperCase() !== 'TO' || words[4].toUpperCase() !== 'ACCOUNT') {
-    return {
-      success: false,
-      data: {
-        type: 'CREDIT',
-        amount,
-        currency,
-        debitAccount,
-        creditAccount,
-        executeBy: null,
-      },
-      error: {
-        status: 'failed',
-        status_reason: PaymentInstructionsMessages.INVALID_ORDER,
-        status_code: STATUS_CODES.INVALID_KEYWORD_ORDER,
-      },
-    };
+  // Amount must be a positive whole number
+  if (!isValidAmount(amountStr)) {
+    parsedData.amount = null;
+    return createInvalidAmountError(parsedData, amountStr, STATUS_CODES);
   }
 
-  if (!isValidAccountId(creditAccount)) {
-    return {
-      success: false,
-      data: {
-        type: 'CREDIT',
-        amount,
-        currency,
-        debitAccount,
-        creditAccount,
-        executeBy: null,
-      },
-      error: {
-        status: 'failed',
-        status_reason: PaymentInstructionsMessages.CREDIT_ACCOUNT_INVALID,
-        status_code: STATUS_CODES.INVALID_ACCOUNT_ID,
-      },
-    };
+  // Check "TO ACCOUNT" keywords if we have enough words
+  if (hasEnoughWords(words, 5) && !hasValidToAccountKeywords(words)) {
+    return createInvalidKeywordOrderError(parsedData, STATUS_CODES);
   }
 
-  // Validate "FOR DEBIT FROM ACCOUNT" keywords
-  if (
-    words[6].toUpperCase() !== 'FOR' ||
-    words[7].toUpperCase() !== 'DEBIT' ||
-    words[8].toUpperCase() !== 'FROM' ||
-    words[9].toUpperCase() !== 'ACCOUNT'
-  ) {
-    return {
-      success: false,
-      data: {
-        type: 'CREDIT',
-        amount,
-        currency,
-        debitAccount,
-        creditAccount,
-        executeBy: null,
-      },
-      error: {
-        status: 'failed',
-        status_reason: PaymentInstructionsMessages.INVALID_ORDER,
-        status_code: STATUS_CODES.INVALID_KEYWORD_ORDER,
-      },
-    };
+  // Validate credit account ID format
+  if (creditAccount && !isValidAccountId(creditAccount)) {
+    return createInvalidAccountIdError(parsedData, false, STATUS_CODES);
   }
 
-  if (!isValidAccountId(debitAccount)) {
-    return {
-      success: false,
-      data: {
-        type: 'CREDIT',
-        amount,
-        currency,
-        debitAccount,
-        creditAccount,
-        executeBy: null,
-      },
-      error: {
-        status: 'failed',
-        status_reason: PaymentInstructionsMessages.DEBIT_ACCOUNT_INVALID,
-        status_code: STATUS_CODES.INVALID_ACCOUNT_ID,
-      },
-    };
+  // Check "FOR DEBIT FROM ACCOUNT" keywords if we have enough words
+  if (hasEnoughWords(words, 10) && !hasValidForDebitFromAccountKeywords(words)) {
+    return createInvalidKeywordOrderError(parsedData, STATUS_CODES);
   }
 
-  // Prevent transactions to the same account
-  if (debitAccount === creditAccount) {
-    return {
-      success: false,
-      data: {
-        type: 'CREDIT',
-        amount,
-        currency,
-        debitAccount,
-        creditAccount,
-        executeBy: null,
-      },
-      error: {
-        status: 'failed',
-        status_reason: PaymentInstructionsMessages.SAME_ACCOUNTS,
-        status_code: STATUS_CODES.SAME_ACCOUNTS,
-      },
-    };
+  // Validate debit account ID format
+  if (debitAccount && !isValidAccountId(debitAccount)) {
+    return createInvalidAccountIdError(parsedData, true, STATUS_CODES);
+  }
+
+  // Can't transfer money to the same account
+  if (debitAccount && creditAccount && areSameAccounts(debitAccount, creditAccount)) {
+    return createSameAccountsError(parsedData, STATUS_CODES);
+  }
+
+  // Need at least 11 words for a complete instruction
+  if (!hasEnoughWords(words, 11)) {
+    return createMissingKeywordError(parsedData, STATUS_CODES);
   }
 
   let executeBy = null;
   let currentIndex = 11;
 
-  // Check for optional ON date
-  if (currentIndex < words.length && words[currentIndex].toUpperCase() === 'ON') {
+  // Check for optional future date
+  if (hasValidOnDate(words, currentIndex)) {
     currentIndex++;
     if (currentIndex >= words.length) {
-      return {
-        success: false,
-        data: {
-          type: 'CREDIT',
-          amount,
-          currency,
-          debitAccount,
-          creditAccount,
+      return createInvalidDateError(
+        {
+          ...parsedData,
           executeBy: null,
         },
-        error: {
-          status: 'failed',
-          status_reason: PaymentInstructionsMessages.INVALID_DATE,
-          status_code: STATUS_CODES.INVALID_DATE_FORMAT,
-        },
-      };
+        STATUS_CODES
+      );
     }
 
     const dateStr = words[currentIndex];
     const date = parseDate(dateStr);
     if (!date) {
-      return {
-        success: false,
-        data: {
-          type: 'CREDIT',
-          amount,
-          currency,
-          debitAccount,
-          creditAccount,
+      return createInvalidDateError(
+        {
+          ...parsedData,
           executeBy: dateStr,
         },
-        error: {
-          status: 'failed',
-          status_reason: PaymentInstructionsMessages.INVALID_DATE,
-          status_code: STATUS_CODES.INVALID_DATE_FORMAT,
-        },
-      };
+        STATUS_CODES
+      );
     }
 
     executeBy = dateStr;
     currentIndex++;
   }
 
-  // Ensure no extra words after the instruction
-  if (currentIndex < words.length) {
-    return {
-      success: false,
-      data: {
-        type: 'CREDIT',
-        amount,
-        currency,
-        debitAccount,
-        creditAccount,
+  // Make sure no extra words at the end
+  if (hasExtraWords(words, currentIndex)) {
+    return createInvalidKeywordOrderError(
+      {
+        ...parsedData,
         executeBy,
       },
-      error: {
-        status: 'failed',
-        status_reason: PaymentInstructionsMessages.INVALID_ORDER,
-        status_code: STATUS_CODES.INVALID_KEYWORD_ORDER,
-      },
-    };
+      STATUS_CODES
+    );
   }
 
-  return {
-    success: true,
-    data: {
-      type: 'CREDIT',
-      amount,
-      currency,
-      debitAccount,
-      creditAccount,
-      executeBy,
-    },
-  };
+  // Everything looks good
+  return createSuccessResponse({
+    ...parsedData,
+    executeBy,
+  });
 }
 
-// Process transaction between accounts
+// Execute the actual money transfer between accounts
 function processTransaction(parsedData, accounts) {
-  // Prepare response accounts for all cases - maintain order from request accounts array
+  // Prepare list of accounts involved in this transaction
   let responseAccounts = [];
 
-  // Add accounts in the order they appear in the request
   accounts.forEach((account) => {
     if (account.id === parsedData.debitAccount || account.id === parsedData.creditAccount) {
-      // Create new object instead of modifying parameter
       responseAccounts.push({
         id: account.id,
         balance: account.balance,
@@ -644,92 +367,94 @@ function processTransaction(parsedData, accounts) {
     }
   });
 
-  // Handle account not found errors
+  // Find the actual account objects
   const debitAccountObj = accounts.find((acc) => acc.id === parsedData.debitAccount);
   const creditAccountObj = accounts.find((acc) => acc.id === parsedData.creditAccount);
 
-  if (!debitAccountObj) {
-    return {
-      type: parsedData.type,
-      amount: parsedData.amount,
-      currency: parsedData.currency,
-      debit_account: parsedData.debitAccount,
-      credit_account: parsedData.creditAccount,
-      execute_by: parsedData.executeBy,
-      status: 'failed',
-      status_reason: PaymentInstructionsMessages.DEBIT_ACCOUNT_NOT_FOUND,
-      status_code: STATUS_CODES.ACCOUNT_NOT_FOUND,
-      accounts: responseAccounts,
-    };
+  // Make sure debit account exists
+  if (!debitAccountExists(debitAccountObj)) {
+    return createAccountNotFoundError(
+      {
+        type: parsedData.type,
+        amount: parsedData.amount,
+        currency: parsedData.currency,
+        debitAccount: parsedData.debitAccount,
+        creditAccount: parsedData.creditAccount,
+        executeBy: parsedData.executeBy,
+        accounts: responseAccounts,
+      },
+      true,
+      STATUS_CODES
+    );
   }
 
-  if (!creditAccountObj) {
-    return {
-      type: parsedData.type,
-      amount: parsedData.amount,
-      currency: parsedData.currency,
-      debit_account: parsedData.debitAccount,
-      credit_account: parsedData.creditAccount,
-      execute_by: parsedData.executeBy,
-      status: 'failed',
-      status_reason: PaymentInstructionsMessages.CREDIT_ACCOUNT_NOT_FOUND,
-      status_code: STATUS_CODES.ACCOUNT_NOT_FOUND,
-      accounts: responseAccounts,
-    };
+  // Make sure credit account exists
+  if (!creditAccountExists(creditAccountObj)) {
+    return createAccountNotFoundError(
+      {
+        type: parsedData.type,
+        amount: parsedData.amount,
+        currency: parsedData.currency,
+        debitAccount: parsedData.debitAccount,
+        creditAccount: parsedData.creditAccount,
+        executeBy: parsedData.executeBy,
+        accounts: responseAccounts,
+      },
+      false,
+      STATUS_CODES
+    );
   }
 
-  // Validate currency is supported
-  if (!SUPPORTED_CURRENCIES.includes(parsedData.currency)) {
-    return {
-      type: parsedData.type,
-      amount: parsedData.amount,
-      currency: parsedData.currency,
-      debit_account: parsedData.debitAccount,
-      credit_account: parsedData.creditAccount,
-      execute_by: parsedData.executeBy,
-      status: 'failed',
-      status_reason: PaymentInstructionsMessages.UNSUPPORTED_CURRENCY,
-      status_code: STATUS_CODES.UNSUPPORTED_CURRENCY,
-      accounts: responseAccounts,
-    };
+  // Make sure we support this currency
+  if (!isSupportedCurrency(parsedData.currency, SUPPORTED_CURRENCIES)) {
+    return createUnsupportedCurrencyError(
+      {
+        type: parsedData.type,
+        amount: parsedData.amount,
+        currency: parsedData.currency,
+        debitAccount: parsedData.debitAccount,
+        creditAccount: parsedData.creditAccount,
+        executeBy: parsedData.executeBy,
+        accounts: responseAccounts,
+      },
+      STATUS_CODES
+    );
   }
 
-  // Validate currency consistency
-  if (
-    debitAccountObj.currency !== creditAccountObj.currency ||
-    debitAccountObj.currency !== parsedData.currency
-  ) {
-    return {
-      type: parsedData.type,
-      amount: parsedData.amount,
-      currency: parsedData.currency,
-      debit_account: parsedData.debitAccount,
-      credit_account: parsedData.creditAccount,
-      execute_by: parsedData.executeBy,
-      status: 'failed',
-      status_reason: PaymentInstructionsMessages.CURRENCY_MISMATCH,
-      status_code: STATUS_CODES.CURRENCY_MISMATCH,
-      accounts: responseAccounts,
-    };
+  // Make sure all accounts use the same currency
+  if (!currenciesMatch(debitAccountObj, creditAccountObj, parsedData.currency)) {
+    return createCurrencyMismatchError(
+      {
+        type: parsedData.type,
+        amount: parsedData.amount,
+        currency: parsedData.currency,
+        debitAccount: parsedData.debitAccount,
+        creditAccount: parsedData.creditAccount,
+        executeBy: parsedData.executeBy,
+        accounts: responseAccounts,
+      },
+      STATUS_CODES
+    );
   }
 
-  // Validate sufficient funds in debit account
-  if (debitAccountObj.balance < parsedData.amount) {
-    return {
-      type: parsedData.type,
-      amount: parsedData.amount,
-      currency: parsedData.currency,
-      debit_account: parsedData.debitAccount,
-      credit_account: parsedData.creditAccount,
-      execute_by: parsedData.executeBy,
-      status: 'failed',
-      status_reason: `${PaymentInstructionsMessages.INSUFFICIENT_FUNDS}: has ${debitAccountObj.balance} ${parsedData.currency}, needs ${parsedData.amount} ${parsedData.currency}`,
-      status_code: STATUS_CODES.INSUFFICIENT_FUNDS,
-      accounts: responseAccounts,
-    };
+  // Make sure debit account has enough money
+  if (!hasSufficientFunds(debitAccountObj, parsedData.amount)) {
+    return createInsufficientFundsError(
+      {
+        type: parsedData.type,
+        amount: parsedData.amount,
+        currency: parsedData.currency,
+        debitAccount: parsedData.debitAccount,
+        creditAccount: parsedData.creditAccount,
+        executeBy: parsedData.executeBy,
+        accounts: responseAccounts,
+      },
+      debitAccountObj,
+      STATUS_CODES
+    );
   }
 
-  // Check if transaction should be executed immediately or scheduled for future
+  // Determine if transaction executes now or later
   let status = 'successful';
   let statusCode = STATUS_CODES.SUCCESSFUL;
   let statusReason = PaymentInstructionsMessages.TRANSACTION_SUCCESS;
@@ -738,8 +463,8 @@ function processTransaction(parsedData, accounts) {
     const executeDate = parseDate(parsedData.executeBy);
     const currentDate = getCurrentUTCDate();
 
-    // If execution date is in the future, mark as pending
-    if (executeDate > currentDate) {
+    // Future-dated transactions are pending
+    if (isFutureDate(executeDate, currentDate)) {
       status = 'pending';
       statusCode = STATUS_CODES.PENDING;
       statusReason = PaymentInstructionsMessages.TRANSACTION_PENDING;
@@ -748,10 +473,9 @@ function processTransaction(parsedData, accounts) {
 
   // Execute transaction if not pending
   if (status === 'successful') {
-    // Create a new array with updated balances instead of modifying existing objects
     responseAccounts = responseAccounts.map((account) => {
       if (account.id === parsedData.debitAccount) {
-        // Debit account: subtract amount
+        // Remove money from debit account
         return {
           ...account,
           balance_before: account.balance,
@@ -759,7 +483,6 @@ function processTransaction(parsedData, accounts) {
         };
       }
       if (account.id === parsedData.creditAccount) {
-        // Credit account: add amount
         return {
           ...account,
           balance_before: account.balance,
@@ -770,6 +493,7 @@ function processTransaction(parsedData, accounts) {
     });
   }
 
+  // Return final transaction result
   return {
     type: parsedData.type,
     amount: parsedData.amount,
@@ -784,64 +508,51 @@ function processTransaction(parsedData, accounts) {
   };
 }
 
-// Parse payment instruction (DEBIT or CREDIT format)
+// Main function that figures out if this is a DEBIT or CREDIT instruction
 function parseInstruction(instruction) {
+  // Must be a string
   if (!instruction || typeof instruction !== 'string') {
-    return {
-      success: false,
-      error: {
-        status: 'failed',
-        status_reason: PaymentInstructionsMessages.MALFORMED_INSTRUCTION,
-        status_code: STATUS_CODES.MALFORMED_INSTRUCTION,
-      },
-    };
+    return createMalformedInstructionError(STATUS_CODES);
   }
 
+  // Split into words
   const words = splitByWhitespace(instruction);
-  if (words.length < 6) {
-    return {
-      success: false,
-      error: {
-        status: 'failed',
-        status_reason: PaymentInstructionsMessages.MALFORMED_INSTRUCTION,
-        status_code: STATUS_CODES.MALFORMED_INSTRUCTION,
-      },
-    };
+
+  // Need at least 6 words for any valid instruction
+  if (!hasEnoughWords(words, 6)) {
+    return createMalformedInstructionError(STATUS_CODES);
   }
 
+  // Check first word to determine instruction type
   const firstWord = words[0].toUpperCase();
-  if (firstWord === 'DEBIT') {
-    return parseDebitInstruction(words);
+  if (hasValidFirstWord(firstWord)) {
+    if (firstWord === 'DEBIT') {
+      return parseDebitInstruction(words);
+    }
+    if (firstWord === 'CREDIT') {
+      return parseCreditInstruction(words);
+    }
   }
-  if (firstWord === 'CREDIT') {
-    return parseCreditInstruction(words);
-  }
-  return {
-    success: false,
-    error: {
-      status: 'failed',
-      status_reason: PaymentInstructionsMessages.MALFORMED_INSTRUCTION,
-      status_code: STATUS_CODES.MALFORMED_INSTRUCTION,
-    },
-  };
+
+  // Not a valid instruction type
+  return createMalformedInstructionError(STATUS_CODES);
 }
 
-// Service function that follows the two-parameter constraint
+// Main service function that ties everything together
 async function processTransactionService(serviceData, options = {}) {
-  // eslint-disable-next-line no-unused-vars
-  const opts = options; // Mark as used
+  const opts = options;
 
-  // Validate input data first
+  // Validate input data matches our expected format
   const data = validator.validate(serviceData, parsedServiceSpec);
 
   // Extract the instruction and accounts
   const { instruction, accounts } = data;
 
-  // Parse instruction
+  // Parse the instruction to make sure it's valid
   const parseResult = parseInstruction(instruction);
 
+  // If parsing failed, return the error
   if (!parseResult.success) {
-    // For parsing errors, we may have parsed data even if validation failed
     const parsedData = parseResult.data || {
       type: null,
       amount: null,
@@ -851,14 +562,12 @@ async function processTransactionService(serviceData, options = {}) {
       executeBy: null,
     };
 
-    // Also include any error information
     const errorInfo = parseResult.error || {
       status_reason: PaymentInstructionsMessages.MALFORMED_INSTRUCTION,
       status_code: STATUS_CODES.MALFORMED_INSTRUCTION,
     };
 
-    // Prepare accounts with balance_before for error responses
-    // Only include the accounts that are involved in the transaction
+    // Prepare accounts info for error response
     const responseAccounts = [];
     if (parsedData.debitAccount || parsedData.creditAccount) {
       accounts.forEach((account) => {

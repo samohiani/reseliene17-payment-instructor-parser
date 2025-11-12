@@ -276,9 +276,10 @@ function Server(serverConfig = {}) {
   function startServer() {
     app.use((_, res, __) => {
       // Global 404 Catcher
-      res.status(404).json({
-        status: 'error',
-        message: 'Resource not found. Available endpoint: POST /payment-instructions',
+      res.status(200).json({
+        status: 'success',
+        message:
+          'This is the Pament Instruction Parser. The available endpoint: POST /payment-instructions',
       });
     });
     app.use((err, _, res, __) => {
